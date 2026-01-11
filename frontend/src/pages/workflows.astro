@@ -1,0 +1,66 @@
+---
+import Layout from '../layouts/Layout.astro';
+import WorkflowBuilder from '../components/dashboard/WorkflowBuilder';
+import LiveStatus from '../components/dashboard/LiveStatus';
+---
+
+<Layout title="BrokeAgent - Workflows">
+	<div class="flex min-h-screen flex-col">
+		<!-- Header -->
+		<header class="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+			<div class="container flex h-14 items-center px-4">
+				<div class="flex items-center gap-2">
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
+						<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+					</svg>
+					<span class="font-bold text-lg">BrokeAgent</span>
+				</div>
+				<nav class="ml-8 flex items-center gap-6 text-sm">
+					<a href="/" class="font-medium transition-colors hover:text-foreground/80 text-muted-foreground">Dashboard</a>
+					<a href="/workflows" class="font-medium transition-colors hover:text-foreground/80 text-foreground">Workflows</a>
+					<a href="/settings" class="font-medium transition-colors hover:text-foreground/80 text-muted-foreground">Settings</a>
+				</nav>
+				<div class="ml-auto flex items-center gap-4">
+				<a
+					href="http://localhost:3050/openapi"
+					target="_blank"
+					class="text-sm text-muted-foreground hover:text-foreground transition-colors"
+				>
+					API Docs
+				</a>
+				</div>
+			</div>
+		</header>
+
+		<!-- Main Content -->
+		<main class="flex-1 container px-4 py-8">
+			<div class="mb-8">
+				<h1 class="text-3xl font-bold">Workflows</h1>
+				<p class="text-muted-foreground mt-1">Build and execute trading workflows with AI agents</p>
+			</div>
+
+			<div class="grid gap-8 lg:grid-cols-3">
+				<!-- Main Workflow Builder Area -->
+				<div class="lg:col-span-2">
+					<WorkflowBuilder client:load />
+				</div>
+
+				<!-- Sidebar - System Status -->
+				<div class="space-y-6">
+					<section id="status">
+						<h2 class="text-xl font-bold mb-4">System Status</h2>
+						<LiveStatus client:load />
+					</section>
+				</div>
+			</div>
+		</main>
+
+		<!-- Footer -->
+		<footer class="border-t py-6 text-center text-sm text-muted-foreground">
+			<div class="container">
+				<p>BrokeAgent - AI-Powered Trading Simulation</p>
+				<p class="mt-1">Built with Elysia, LangGraph, and Astro</p>
+			</div>
+		</footer>
+	</div>
+</Layout>

@@ -1,0 +1,85 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Agents from '../components/dashboard/Agents';
+import LiveStatus from '../components/dashboard/LiveStatus';
+import MemoryExplorer from '../components/dashboard/MemoryExplorer';
+import TradingModeToggle from '../components/dashboard/TradingModeToggle';
+---
+
+<Layout title="BrokeAgent - Settings">
+	<div class="flex min-h-screen flex-col">
+		<!-- Header -->
+		<header class="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+			<div class="container flex h-14 items-center px-4">
+				<div class="flex items-center gap-2">
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
+						<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+					</svg>
+					<span class="font-bold text-lg">BrokeAgent</span>
+				</div>
+				<nav class="ml-8 flex items-center gap-6 text-sm">
+					<a href="/" class="font-medium transition-colors hover:text-foreground/80 text-muted-foreground">Dashboard</a>
+					<a href="/workflows" class="font-medium transition-colors hover:text-foreground/80 text-muted-foreground">Workflows</a>
+					<a href="/settings" class="font-medium transition-colors hover:text-foreground/80 text-foreground">Settings</a>
+				</nav>
+				<div class="ml-auto flex items-center gap-4">
+				<a
+					href="http://localhost:3050/openapi"
+					target="_blank"
+					class="text-sm text-muted-foreground hover:text-foreground transition-colors"
+				>
+					API Docs
+				</a>
+				</div>
+			</div>
+		</header>
+
+		<!-- Main Content -->
+		<main class="flex-1 container px-4 py-8">
+			<div class="mb-8">
+				<h1 class="text-3xl font-bold">Settings</h1>
+				<p class="text-muted-foreground mt-1">Configure agents, system settings, and monitor system health</p>
+			</div>
+
+			<div class="grid gap-8 lg:grid-cols-3">
+				<!-- Main Settings Area -->
+				<div class="lg:col-span-2 space-y-8">
+					<!-- Agent Configuration -->
+					<section id="agents">
+						<h2 class="text-2xl font-bold mb-6">Agent Configuration</h2>
+						<Agents client:load />
+					</section>
+
+					<!-- Memory Explorer -->
+					<section id="memory">
+						<h2 class="text-2xl font-bold mb-6">Memory Explorer</h2>
+						<MemoryExplorer client:load />
+					</section>
+				</div>
+
+				<!-- Sidebar - System Status -->
+				<div class="space-y-6">
+					<!-- Trading Mode -->
+					<section id="trading-mode">
+						<h2 class="text-xl font-bold mb-4">Trading Mode</h2>
+						<TradingModeToggle client:load />
+					</section>
+
+					<!-- System Status -->
+					<section id="status">
+						<h2 class="text-xl font-bold mb-4">System Status</h2>
+						<LiveStatus client:load />
+					</section>
+				</div>
+			</div>
+		</main>
+
+		<!-- Footer -->
+		<footer class="border-t py-6 text-center text-sm text-muted-foreground">
+			<div class="container">
+				<p>BrokeAgent - AI-Powered Trading Simulation</p>
+				<p class="mt-1">Built with Elysia, LangGraph, and Astro</p>
+			</div>
+		</footer>
+	</div>
+</Layout>

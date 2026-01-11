@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "import",
+    "unicorn",
+    "promise",
+    "typescript",
+    "oxc",
+    "vitest",
+    "eslint",
+    "vue",
+    "jest",
+    "jsdoc",
+    "jsx-a11y"
+  ],
+  "env": {
+    "browser": true
+  },
+  "globals": {
+    "foo": "readonly"
+  },
+  "ignorePatterns": ["node_modules", "bun.lock"],
+  "settings": {},
+  "rules": {}
+}

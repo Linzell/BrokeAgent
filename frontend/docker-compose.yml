@@ -1,0 +1,11 @@
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    container_name: broker-agent-frontend
+    ports:
+      - "127.0.0.1:80:80"
+    environment:
+      API_URL: ${API_URL:-http://localhost:3000}
+    restart: unless-stopped

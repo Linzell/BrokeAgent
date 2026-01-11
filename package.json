@@ -1,0 +1,30 @@
+{
+  "name": "broker-agent",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "app",
+    "frontend",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "dev:backend": "cd app && bun run dev",
+    "dev:frontend": "bun run --filter frontend dev",
+    "build": "bun run --filter '*' build",
+    "test": "NODE_ENV=test vitest",
+    "test:coverage": "NODE_ENV=test vitest --coverage",
+    "lint": "oxlint",
+    "format": "oxfmt"
+  },
+  "dependencies": {
+    "croner": "^9.1.0",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.23.0",
+    "oxlint": "^1.38.0",
+    "vitest": "^3.1.4"
+  }
+}

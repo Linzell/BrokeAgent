@@ -1,0 +1,33 @@
+{
+  "name": "@broker-agent/app",
+  "version": "1.0.50",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun",
+    "start": "bun run dist/main.js",
+    "test": "vitest",
+    "db:init": "bun run src/database/cli.ts init",
+    "db:migrate": "bun run src/database/cli.ts run",
+    "db:status": "bun run src/database/cli.ts status",
+    "db:rollback": "bun run src/database/cli.ts rollback"
+  },
+  "dependencies": {
+    "@broker-agent/shared": "workspace:*",
+    "@elysiajs/cors": "^1.4.1",
+    "@elysiajs/openapi": "^1.4.13",
+    "@langchain/core": "^1.1.12",
+    "@langchain/langgraph": "^1.0.7",
+    "@langchain/ollama": "^1.1.0",
+    "@langchain/openai": "^1.2.1",
+    "croner": "^9.1.0",
+    "drizzle-orm": "^0.45.1",
+    "elysia": "latest",
+    "postgres": "^3.4.8"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "bun-types": "latest",
+    "drizzle-kit": "^0.31.8"
+  }
+}
