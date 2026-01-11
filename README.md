@@ -5,7 +5,9 @@ AI-powered trading simulation system using multi-agent orchestration with LangGr
 ## Features
 
 - **Multi-Agent Architecture**: Specialized agents for research, analysis, and decision-making
-- **Real-time WebSocket Updates**: Live workflow execution monitoring
+- **Bull vs Bear Debates**: Tiered debate system with full, batch, and quick-score analysis modes
+- **Smart LLM Auto-Select**: Automatic model fallback with health tracking and performance ranking
+- **Real-time WebSocket Updates**: Live workflow execution monitoring with LLM usage tracking
 - **LangGraph-style State Graphs**: Composable workflow orchestration with checkpointing
 - **Memory System**: Vector-based semantic memory with PostgreSQL + pgvector
 - **Paper Trading**: Simulated trading with portfolio tracking and P&L analysis
@@ -29,12 +31,12 @@ AI-powered trading simulation system using multi-agent orchestration with LangGr
 │  │  to teams       │  │  - Market Data   │  │ - Sentiment   │   │
 │  └────────┬────────┘  └──────────────────┘  └───────────────┘   │
 │           │                                                      │
-│  ┌────────▼────────┐                                            │
-│  │  Decision Team  │                                            │
-│  │  - PM Agent     │                                            │
-│  │  - Risk Manager │                                            │
-│  │  - Executor     │                                            │
-│  └─────────────────┘                                            │
+│  ┌────────▼────────┐  ┌──────────────────┐                      │
+│  │  Decision Team  │  │   Debate Team    │                      │
+│  │  - PM Agent     │  │  - Bull Agent    │                      │
+│  │  - Risk Manager │  │  - Bear Agent    │                      │
+│  │  - Executor     │  │  - Tiered Debate │                      │
+│  └─────────────────┘  └──────────────────┘                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  Memory Store │ Checkpointer │ LLM Service │ Embedding Provider │
 └─────────────────────────────┬───────────────────────────────────┘
@@ -60,6 +62,11 @@ AI-powered trading simulation system using multi-agent orchestration with LangGr
 - **Portfolio Manager**: Makes buy/sell/hold decisions with confidence scores
 - **Risk Manager**: Position sizing, portfolio risk assessment
 - **Order Executor**: Generates and executes paper trade orders
+
+### Debate Team
+- **Bull Researcher**: Builds bullish investment thesis with key points
+- **Bear Researcher**: Builds bearish thesis with risk factors
+- **Tiered Debate**: Optimized analysis - full debate for holdings, batch for watchlist, quick scores for discovery
 
 ## Quick Start
 
@@ -111,6 +118,7 @@ brokeagent/
 │   ├── src/
 │   │   ├── agents/        # Agent implementations
 │   │   │   ├── analysis/  # Analysis team agents
+│   │   │   ├── debate/    # Bull/Bear debate agents
 │   │   │   ├── decision/  # Decision team agents
 │   │   │   ├── research/  # Research team agents
 │   │   │   ├── base.ts    # Base agent class
@@ -164,6 +172,11 @@ curl -X POST http://localhost:3050/api/analyze \
 curl -X POST http://localhost:3050/api/trade \
   -H "Content-Type: application/json" \
   -d '{"symbols": ["GOOGL"]}'
+
+# Run tiered debate (holdings + watchlist + discovery)
+curl -X POST http://localhost:3050/api/tiered-debate \
+  -H "Content-Type: application/json" \
+  -d '{"holdings": ["AAPL"], "watchlist": ["MSFT", "GOOGL"], "discovery": ["NVDA", "AMD"]}'
 ```
 
 ### Data Endpoints
@@ -182,6 +195,9 @@ curl http://localhost:3050/api/portfolio/decisions
 curl -X POST http://localhost:3050/api/memory/search \
   -H "Content-Type: application/json" \
   -d '{"query": "AAPL earnings"}'
+
+# Get LLM model health stats
+curl http://localhost:3050/api/llm/smart/health
 ```
 
 ## WebSocket Events
@@ -198,7 +214,7 @@ ws.onopen = () => {
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
-  // Event types: workflow:started, workflow:step, workflow:completed, workflow:error
+  // Event types: workflow:started, workflow:step, workflow:completed, workflow:error, workflow:llm
   console.log(data.type, data.workflowId, data.data);
 };
 ```
@@ -213,21 +229,24 @@ Create a `.env` file in the `app` directory:
 # Database
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/brokeagent
 
-# LLM Provider (ollama or openai)
+# LLM Provider (ollama, openai, or openrouter)
 LLM_PROVIDER=ollama
-OLLAMA_HOST=http://localhost:11434
+OLLAMA_BASE_URL=http://localhost:11434
 
-# Optional: OpenAI (if using cloud LLM)
+# Optional: OpenAI
 # OPENAI_API_KEY=sk-...
+
+# Optional: OpenRouter (access to multiple models with auto-fallback)
+# OPENROUTER_API_KEY=sk-or-...
 
 # Optional: External APIs
 # FINNHUB_API_KEY=...
-# ALPHA_VANTAGE_API_KEY=...
+# TAVILY_API_KEY=...
 ```
 
 ### Ollama Models
 
-The system uses Ollama for local LLM inference:
+The system uses Ollama for local LLM inference (or OpenRouter/OpenAI for cloud):
 
 ```bash
 # Main model for agent reasoning
