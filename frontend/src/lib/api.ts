@@ -463,6 +463,154 @@ export const api = {
       }),
   },
 
+  // Schedules
+  schedules: {
+    list: () =>
+      request<{
+        schedules: Array<{
+          id: string;
+          name: string;
+          description?: string;
+          trigger: {
+            type: "cron" | "interval" | "event";
+            expression?: string;
+            intervalMs?: number;
+            eventType?: string;
+          };
+          request: {
+            type: string;
+            symbols: string[];
+          };
+          enabled: boolean;
+          maxConcurrent: number;
+          retryOnFail: boolean;
+          tags?: string[];
+          createdAt: string;
+          lastRunAt?: string;
+          nextRunAt?: string;
+        }>;
+      }>("/api/schedules"),
+
+    presets: () =>
+      request<{
+        presets: Array<{
+          key: string;
+          name: string;
+          description: string;
+          trigger: {
+            type: "cron" | "interval" | "event";
+            expression?: string;
+            intervalMs?: number;
+            eventType?: string;
+          };
+          requestType: string;
+        }>;
+      }>("/api/schedules/presets"),
+
+    get: (id: string) =>
+      request<{
+        schedule: {
+          id: string;
+          name: string;
+          description?: string;
+          trigger: {
+            type: "cron" | "interval" | "event";
+            expression?: string;
+            intervalMs?: number;
+            eventType?: string;
+          };
+          request: {
+            type: string;
+            symbols: string[];
+          };
+          enabled: boolean;
+          maxConcurrent: number;
+          retryOnFail: boolean;
+          tags?: string[];
+          createdAt: string;
+          lastRunAt?: string;
+          nextRunAt?: string;
+        };
+      }>(`/api/schedules/${id}`),
+
+    create: (data: {
+      name: string;
+      description?: string;
+      trigger: {
+        type: "cron" | "interval" | "event";
+        expression?: string;
+        intervalMs?: number;
+        eventType?: string;
+      };
+      request: {
+        type: string;
+        symbols: string[];
+      };
+      enabled?: boolean;
+      maxConcurrent?: number;
+      retryOnFail?: boolean;
+      tags?: string[];
+    }) =>
+      request<{
+        success: boolean;
+        scheduleId: string;
+      }>("/api/schedules", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    createFromPreset: (presetKey: string, symbols: string[]) =>
+      request<{
+        success: boolean;
+        scheduleId: string;
+      }>(`/api/schedules/preset/${presetKey}`, {
+        method: "POST",
+        body: JSON.stringify({ symbols }),
+      }),
+
+    delete: (id: string) =>
+      request<{ success: boolean }>(`/api/schedules/${id}`, {
+        method: "DELETE",
+      }),
+
+    enable: (id: string) =>
+      request<{ success: boolean }>(`/api/schedules/${id}/enable`, {
+        method: "POST",
+      }),
+
+    disable: (id: string) =>
+      request<{ success: boolean }>(`/api/schedules/${id}/disable`, {
+        method: "POST",
+      }),
+
+    runNow: (id: string) =>
+      request<{
+        success: boolean;
+        executionId?: string;
+      }>(`/api/schedules/${id}/run`, {
+        method: "POST",
+      }),
+
+    history: (id: string, limit?: number) =>
+      request<{
+        history: Array<{
+          id: string;
+          scheduleId: string;
+          status: "pending" | "running" | "completed" | "failed";
+          startedAt: string;
+          completedAt?: string;
+          error?: string;
+          workflowExecutionId?: string;
+        }>;
+      }>(`/api/schedules/${id}/history${limit ? `?limit=${limit}` : ""}`),
+
+    triggerEvent: (eventType: string, payload?: unknown) =>
+      request<{ success: boolean }>(`/api/schedules/event/${eventType}`, {
+        method: "POST",
+        body: JSON.stringify({ payload }),
+      }),
+  },
+
   // Memory maintenance
   maintenance: {
     runMemoryMaintenance: () =>

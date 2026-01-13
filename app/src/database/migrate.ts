@@ -219,7 +219,98 @@ export async function runMigrationsCLI(command: string): Promise<void> {
       }
       break;
 
+    case "clean":
+      console.log("\n⚠️  WARNING: This will DELETE ALL DATA except agents and workflows!");
+      console.log("This action cannot be undone.\n");
+      
+      // Run the clean migration
+      await cleanDatabase();
+      break;
+
     default:
-      console.log("Usage: migrate [init|run|status|rollback]");
+      console.log("Usage: migrate [init|run|status|rollback|clean]");
+      console.log("");
+      console.log("Commands:");
+      console.log("  init     - Run initial database setup from init.sql");
+      console.log("  run      - Apply all pending migrations");
+      console.log("  status   - Show migration status");
+      console.log("  rollback - Rollback the last migration");
+      console.log("  clean    - Remove all data for fresh experiments (keeps agents/workflows)");
+  }
+}
+
+/**
+ * Clean the database for production/real experiments
+ * Removes all fake data while preserving schema and agent/workflow definitions
+ */
+async function cleanDatabase(): Promise<void> {
+  console.log("Cleaning database for real experiments...\n");
+
+  try {
+    // Remove execution history
+    console.log("Removing execution history...");
+    await db`DELETE FROM agent_executions WHERE id IS NOT NULL`;
+    await db`DELETE FROM schedule_executions WHERE id IS NOT NULL`;
+    await db`DELETE FROM conversation_messages WHERE id IS NOT NULL`;
+    await db`DELETE FROM workflow_checkpoints WHERE id IS NOT NULL`;
+    await db`DELETE FROM workflow_executions WHERE id IS NOT NULL`;
+    await db`DELETE FROM events WHERE id IS NOT NULL`;
+    console.log("  ✓ Execution history cleared");
+
+    // Remove trading data
+    console.log("Removing trading data...");
+    await db`DELETE FROM trading_decisions WHERE id IS NOT NULL`;
+    await db`DELETE FROM orders WHERE id IS NOT NULL`;
+    await db`DELETE FROM portfolio WHERE id IS NOT NULL`;
+    console.log("  ✓ Trading data cleared");
+
+    // Remove market data
+    console.log("Removing market data...");
+    await db`DELETE FROM market_data WHERE id IS NOT NULL`;
+    await db`DELETE FROM historical_data WHERE id IS NOT NULL`;
+    await db`DELETE FROM news_articles WHERE id IS NOT NULL`;
+    await db`DELETE FROM social_mentions WHERE id IS NOT NULL`;
+    console.log("  ✓ Market data cleared");
+
+    // Remove memories
+    console.log("Removing memories...");
+    await db`DELETE FROM memories WHERE id IS NOT NULL`;
+    console.log("  ✓ Memories cleared");
+
+    // Reset account
+    console.log("Resetting account...");
+    await db`
+      UPDATE accounts 
+      SET 
+        cash = 100000.00,
+        total_value = 100000.00,
+        total_pnl = 0.00,
+        total_pnl_percent = 0.00,
+        mode = 'paper',
+        updated_at = NOW()
+      WHERE name = 'default'
+    `;
+    console.log("  ✓ Account reset to $100,000");
+
+    // Show summary
+    const summary = await db`
+      SELECT 
+        (SELECT COUNT(*) FROM agents) as agents,
+        (SELECT COUNT(*) FROM workflows) as workflows,
+        (SELECT COUNT(*) FROM scheduled_workflows) as schedules,
+        (SELECT cash FROM accounts WHERE name = 'default') as cash
+    `;
+    
+    console.log("\n✅ Database cleaned successfully!");
+    console.log("\nPreserved:");
+    console.log(`  - ${summary[0].agents} agents`);
+    console.log(`  - ${summary[0].workflows} workflows`);
+    console.log(`  - ${summary[0].schedules} scheduled workflows`);
+    console.log(`  - Starting cash: $${Number(summary[0].cash).toLocaleString()}`);
+    console.log("\nYou're ready for real experiments! 🚀");
+
+  } catch (error) {
+    console.error("\n❌ Clean failed:", error);
+    throw error;
   }
 }

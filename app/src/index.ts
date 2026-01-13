@@ -5,11 +5,126 @@ import { sql, testConnection, initializeDatabase, closeDatabase } from "./core/d
 import { memoryStore } from "./services/memory";
 import { createDefaultEmbeddingProvider } from "./services/embeddings";
 import { loadAgentsFromDatabase } from "./agents/base";
-import { runResearchWorkflow, runTradingWorkflow, runDebateWorkflow, runTieredDebateWorkflow, setWorkflowEventEmitter, createResearchWorkflow } from "./core/workflows";
+import { runResearchWorkflow, runTradingWorkflow, runDecisionWorkflow, runDebateWorkflow, runTieredDebateWorkflow, setWorkflowEventEmitter, createResearchWorkflow } from "./core/workflows";
 import { executeTieredDebate, type TieredDebateInput, type TieredDebateOutput } from "./agents/debate/tiered";
 import type { WorkflowEvent } from "./core/graph";
 import { llmProvider, type LLMProviderType, compareModels, consensusVote, tradingConsensus, type ModelSpec, detectModelFamily, getModelOptimizations, optimizePromptForModel, getPromptTemplate, listPromptTemplates, createABTest, getABTest, listABTests, updateABTestStatus, deleteABTest, getABTestSummary, runABTest, createModelComparisonTest, smartChat, smartChatAuto, getDefaultCandidateModels, getAllModelHealth, getAllModelPerformance, resetModelHealth, clearModelStats, getModelHealth, getModelPerformance, recordConsensusResult, setLLMEventListener, type LLMUsageEvent } from "./services/llm";
 import { cacheService } from "./services/cache";
+import { scheduler, type ScheduledWorkflow, type ScheduleTrigger } from "./services/scheduler";
+import type { TradingState } from "./core/state";
+
+// ============================================
+// Workflow Runner for Scheduler
+// ============================================
+
+/**
+ * Maps request types to workflow functions for the scheduler
+ */
+async function workflowRunner(request: TradingState["request"]): Promise<TradingState> {
+  console.log(`[WorkflowRunner] Executing ${request.type} workflow for symbols: ${request.symbols?.join(", ") || "none"}`);
+  
+  switch (request.type) {
+    case "research":
+      return runResearchWorkflow(request.symbols || []);
+    
+    case "analysis":
+      return runTradingWorkflow(
+        { type: "analysis", symbols: request.symbols || [] }
+      );
+    
+    case "trade":
+      return runTradingWorkflow(
+        { type: "trade", symbols: request.symbols || [] }
+      );
+    
+    case "decision":
+      // Full decision pipeline: research -> analysis -> decision (creates trading decisions)
+      return runDecisionWorkflow(request.symbols || [], true);
+    
+    case "debate":
+      return runDebateWorkflow(request.symbols || [], true);
+    
+    case "monitor":
+      // Monitor is essentially research + analysis without trading
+      return runTradingWorkflow(
+        { type: "analysis", symbols: request.symbols || [] }
+      );
+    
+    default:
+      throw new Error(`Unknown request type: ${request.type}`);
+  }
+}
+
+// ============================================
+// Preset Schedule Templates
+// ============================================
+
+interface SchedulePreset {
+  name: string;
+  description: string;
+  trigger: ScheduleTrigger;
+  requestType: TradingState["request"]["type"];
+  defaultSymbols?: string[];
+}
+
+const SCHEDULE_PRESETS: Record<string, SchedulePreset> = {
+  "pre-market-news": {
+    name: "Pre-Market News Scan",
+    description: "Gather overnight news, earnings, and pre-market movers at 7:00 AM ET",
+    trigger: { type: "cron", expression: "0 7 * * 1-5" }, // 7 AM Mon-Fri
+    requestType: "research",
+    defaultSymbols: ["SPY", "QQQ"],
+  },
+  "market-open": {
+    name: "Market Open Analysis",
+    description: "Analyze opening moves and sentiment at 9:35 AM ET",
+    trigger: { type: "cron", expression: "35 9 * * 1-5" }, // 9:35 AM Mon-Fri
+    requestType: "debate",
+    defaultSymbols: ["SPY", "QQQ"],
+  },
+  "mid-day-check": {
+    name: "Mid-Day Check",
+    description: "Refresh news and check sentiment shifts at 12:00 PM ET",
+    trigger: { type: "cron", expression: "0 12 * * 1-5" }, // 12 PM Mon-Fri
+    requestType: "research",
+    defaultSymbols: ["SPY", "QQQ"],
+  },
+  "pre-close-analysis": {
+    name: "Pre-Close Analysis",
+    description: "Final analysis before market close at 3:30 PM ET",
+    trigger: { type: "cron", expression: "30 15 * * 1-5" }, // 3:30 PM Mon-Fri
+    requestType: "debate",
+    defaultSymbols: ["SPY", "QQQ"],
+  },
+  "after-hours-scan": {
+    name: "After-Hours Scan",
+    description: "Catch after-hours earnings and news at 4:30 PM ET",
+    trigger: { type: "cron", expression: "30 16 * * 1-5" }, // 4:30 PM Mon-Fri
+    requestType: "research",
+    defaultSymbols: ["SPY", "QQQ"],
+  },
+  "daily-discovery": {
+    name: "Daily Discovery",
+    description: "Find new symbols and trends at 8:00 PM ET",
+    trigger: { type: "cron", expression: "0 20 * * 1-5" }, // 8 PM Mon-Fri
+    requestType: "research",
+    defaultSymbols: ["SPY", "QQQ", "IWM", "DIA"],
+  },
+  "weekend-review": {
+    name: "Weekend Portfolio Review",
+    description: "Weekly portfolio review on Saturday at 10:00 AM ET",
+    trigger: { type: "cron", expression: "0 10 * * 6" }, // 10 AM Saturday
+    requestType: "debate",
+    defaultSymbols: ["SPY", "QQQ"],
+  },
+  "hourly-monitor": {
+    name: "Hourly Monitor",
+    description: "Light monitoring every hour during market hours",
+    trigger: { type: "cron", expression: "0 10-15 * * 1-5" }, // Every hour 10 AM - 3 PM Mon-Fri
+    requestType: "monitor",
+    defaultSymbols: ["SPY"],
+  },
+};
 
 // ============================================
 // Health Check State
@@ -367,6 +482,7 @@ const app = new Elysia()
           { name: "News", description: "News articles and sentiment" },
           { name: "LLM", description: "LLM provider configuration and model management" },
           { name: "Execution", description: "Workflow execution endpoints" },
+          { name: "Scheduler", description: "Scheduled workflow automation" },
           { name: "WebSocket", description: "Real-time updates via WebSocket" },
         ],
         servers: [
@@ -2062,6 +2178,355 @@ the old approach would make ~240 LLM calls. Tiered approach: ~22 calls (90%+ sav
   })
 
   // ============================================
+  // Scheduler Endpoints
+  // ============================================
+
+  .get("/api/schedules", async () => {
+    const schedules = scheduler.getSchedules();
+    return {
+      schedules: schedules.map(s => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        trigger: s.trigger,
+        request: s.request,
+        enabled: s.enabled,
+        maxConcurrent: s.maxConcurrent,
+        retryOnFail: s.retryOnFail,
+        tags: s.tags,
+        createdAt: s.createdAt?.toISOString(),
+        lastRunAt: s.lastRunAt?.toISOString(),
+        nextRunAt: s.nextRunAt?.toISOString(),
+      })),
+      count: schedules.length,
+    };
+  }, {
+    detail: {
+      summary: "List Schedules",
+      description: "Returns all registered scheduled workflows with their status",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .get("/api/schedules/presets", () => {
+    const presets = Object.entries(SCHEDULE_PRESETS).map(([key, preset]) => ({
+      key,
+      ...preset,
+    }));
+    return {
+      presets,
+      count: presets.length,
+    };
+  }, {
+    detail: {
+      summary: "List Schedule Presets",
+      description: "Returns available preset schedule templates for common trading workflows",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .post("/api/schedules", async ({ body }) => {
+    const { name, description, trigger, request, enabled, maxConcurrent, retryOnFail, tags } = body;
+
+    console.log(`[API] Creating schedule: ${name}`);
+
+    try {
+      const scheduleId = await scheduler.register({
+        name,
+        description,
+        trigger: trigger as ScheduleTrigger,
+        request: request as TradingState["request"],
+        enabled: enabled ?? true,
+        maxConcurrent: maxConcurrent ?? 1,
+        retryOnFail: retryOnFail ?? false,
+        tags,
+      });
+
+      const schedule = scheduler.getSchedule(scheduleId);
+
+      return {
+        success: true,
+        schedule: {
+          id: scheduleId,
+          name: schedule?.name,
+          enabled: schedule?.enabled,
+          nextRunAt: schedule?.nextRunAt?.toISOString(),
+        },
+      };
+    } catch (error) {
+      console.error("[API] Failed to create schedule:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }, {
+    body: t.Object({
+      name: t.String({ description: "Schedule name" }),
+      description: t.Optional(t.String({ description: "Schedule description" })),
+      trigger: t.Union([
+        t.Object({
+          type: t.Literal("cron"),
+          expression: t.String({ description: "Cron expression (e.g., '0 9 * * 1-5' for 9 AM weekdays)" }),
+        }),
+        t.Object({
+          type: t.Literal("interval"),
+          intervalMs: t.Number({ description: "Interval in milliseconds" }),
+        }),
+        t.Object({
+          type: t.Literal("event"),
+          eventType: t.String({ description: "Event type to trigger on" }),
+        }),
+      ], { description: "Schedule trigger configuration" }),
+      request: t.Object({
+        type: t.Union([
+          t.Literal("research"),
+          t.Literal("analysis"),
+          t.Literal("trade"),
+          t.Literal("debate"),
+          t.Literal("monitor"),
+        ], { description: "Workflow type to run" }),
+        symbols: t.Optional(t.Array(t.String(), { description: "Stock symbols" })),
+        query: t.Optional(t.String({ description: "Optional query string" })),
+      }, { description: "Workflow request configuration" }),
+      enabled: t.Optional(t.Boolean({ description: "Whether schedule is active (default: true)" })),
+      maxConcurrent: t.Optional(t.Number({ description: "Max concurrent executions (default: 1)" })),
+      retryOnFail: t.Optional(t.Boolean({ description: "Retry on failure (default: false)" })),
+      tags: t.Optional(t.Array(t.String(), { description: "Custom tags for filtering" })),
+    }),
+    detail: {
+      summary: "Create Schedule",
+      description: "Create a new scheduled workflow",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .post("/api/schedules/preset/:presetKey", async ({ params, body }) => {
+    const { presetKey } = params;
+    const { symbols, enabled } = body;
+
+    const preset = SCHEDULE_PRESETS[presetKey];
+    if (!preset) {
+      return {
+        success: false,
+        error: `Preset not found: ${presetKey}`,
+        availablePresets: Object.keys(SCHEDULE_PRESETS),
+      };
+    }
+
+    console.log(`[API] Creating schedule from preset: ${presetKey}`);
+
+    try {
+      const scheduleId = await scheduler.register({
+        name: preset.name,
+        description: preset.description,
+        trigger: preset.trigger,
+        request: {
+          type: preset.requestType,
+          symbols: symbols || preset.defaultSymbols || [],
+        },
+        enabled: enabled ?? true,
+        maxConcurrent: 1,
+        retryOnFail: false,
+      });
+
+      const schedule = scheduler.getSchedule(scheduleId);
+
+      return {
+        success: true,
+        preset: presetKey,
+        schedule: {
+          id: scheduleId,
+          name: schedule?.name,
+          enabled: schedule?.enabled,
+          nextRunAt: schedule?.nextRunAt?.toISOString(),
+        },
+      };
+    } catch (error) {
+      console.error("[API] Failed to create schedule from preset:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }, {
+    params: t.Object({
+      presetKey: t.String({ description: "Preset key (e.g., 'pre-market-news', 'market-open')" }),
+    }),
+    body: t.Object({
+      symbols: t.Optional(t.Array(t.String(), { description: "Override default symbols" })),
+      enabled: t.Optional(t.Boolean({ description: "Whether to enable immediately (default: true)" })),
+    }),
+    detail: {
+      summary: "Create Schedule from Preset",
+      description: "Quick-create a schedule using a preset template",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .get("/api/schedules/:id", async ({ params }) => {
+    const schedule = scheduler.getSchedule(params.id);
+    if (!schedule) {
+      return { error: "Schedule not found" };
+    }
+
+    return {
+      schedule: {
+        id: schedule.id,
+        name: schedule.name,
+        description: schedule.description,
+        trigger: schedule.trigger,
+        request: schedule.request,
+        enabled: schedule.enabled,
+        maxConcurrent: schedule.maxConcurrent,
+        retryOnFail: schedule.retryOnFail,
+        tags: schedule.tags,
+        createdAt: schedule.createdAt?.toISOString(),
+        lastRunAt: schedule.lastRunAt?.toISOString(),
+        nextRunAt: schedule.nextRunAt?.toISOString(),
+      },
+    };
+  }, {
+    params: t.Object({
+      id: t.String({ description: "Schedule UUID" }),
+    }),
+    detail: {
+      summary: "Get Schedule",
+      description: "Get details of a specific scheduled workflow",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .delete("/api/schedules/:id", async ({ params }) => {
+    const deleted = await scheduler.unregister(params.id);
+    return { success: deleted };
+  }, {
+    params: t.Object({
+      id: t.String({ description: "Schedule UUID" }),
+    }),
+    detail: {
+      summary: "Delete Schedule",
+      description: "Delete a scheduled workflow",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .post("/api/schedules/:id/enable", async ({ params }) => {
+    const enabled = await scheduler.enable(params.id);
+    if (!enabled) {
+      return { success: false, error: "Schedule not found" };
+    }
+
+    const schedule = scheduler.getSchedule(params.id);
+    return {
+      success: true,
+      nextRunAt: schedule?.nextRunAt?.toISOString(),
+    };
+  }, {
+    params: t.Object({
+      id: t.String({ description: "Schedule UUID" }),
+    }),
+    detail: {
+      summary: "Enable Schedule",
+      description: "Enable a scheduled workflow",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .post("/api/schedules/:id/disable", async ({ params }) => {
+    const disabled = await scheduler.disable(params.id);
+    return { success: disabled };
+  }, {
+    params: t.Object({
+      id: t.String({ description: "Schedule UUID" }),
+    }),
+    detail: {
+      summary: "Disable Schedule",
+      description: "Disable a scheduled workflow (stops future executions)",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .post("/api/schedules/:id/run", async ({ params }) => {
+    console.log(`[API] Manual trigger for schedule: ${params.id}`);
+
+    const executionId = await scheduler.runNow(params.id);
+    if (!executionId) {
+      return { success: false, error: "Schedule not found or execution failed to start" };
+    }
+
+    return {
+      success: true,
+      executionId,
+      message: "Schedule triggered manually",
+    };
+  }, {
+    params: t.Object({
+      id: t.String({ description: "Schedule UUID" }),
+    }),
+    detail: {
+      summary: "Run Schedule Now",
+      description: "Manually trigger a scheduled workflow immediately (bypasses schedule timing)",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .get("/api/schedules/:id/history", async ({ params, query }) => {
+    const limit = Number(query.limit) || 20;
+    const history = await scheduler.getExecutionHistory(params.id, limit);
+
+    return {
+      scheduleId: params.id,
+      history: history.map(h => ({
+        id: h.id,
+        status: h.status,
+        startedAt: h.startedAt?.toISOString(),
+        completedAt: h.completedAt?.toISOString(),
+        error: h.error,
+        workflowExecutionId: h.workflowExecutionId,
+      })),
+      count: history.length,
+    };
+  }, {
+    params: t.Object({
+      id: t.String({ description: "Schedule UUID" }),
+    }),
+    query: t.Object({
+      limit: t.Optional(t.Numeric({ description: "Max results (default: 20)" })),
+    }),
+    detail: {
+      summary: "Get Schedule History",
+      description: "Get execution history for a scheduled workflow",
+      tags: ["Scheduler"],
+    },
+  })
+
+  .post("/api/schedules/event/:eventType", async ({ params, body }) => {
+    const { eventType } = params;
+    console.log(`[API] Triggering event: ${eventType}`);
+
+    await scheduler.triggerEvent(eventType, body?.payload);
+
+    return {
+      success: true,
+      eventType,
+      timestamp: new Date().toISOString(),
+    };
+  }, {
+    params: t.Object({
+      eventType: t.String({ description: "Event type to trigger" }),
+    }),
+    body: t.Object({
+      payload: t.Optional(t.Any({ description: "Optional event payload" })),
+    }),
+    detail: {
+      summary: "Trigger Event",
+      description: "Trigger an event that will execute any schedules listening for this event type",
+      tags: ["Scheduler"],
+    },
+  })
+
+  // ============================================
   // WebSocket Endpoint
   // ============================================
 
@@ -2232,6 +2697,12 @@ async function start() {
     }
   });
 
+  // Initialize and start scheduler
+  scheduler.setWorkflowRunner(workflowRunner);
+  await scheduler.start();
+  const loadedSchedules = scheduler.getSchedules();
+  console.log(`Scheduler: ${loadedSchedules.length} schedules loaded (${loadedSchedules.filter(s => s.enabled).length} enabled)`);
+
   console.log(`
   BrokeAgent API is running!
 
@@ -2259,16 +2730,21 @@ async function start() {
     POST /api/research  - Run research workflow
     POST /api/analyze   - Run analysis workflow
     POST /api/trade     - Run trading workflow
+    POST /api/debate    - Run bull/bear debate
 
-  Example:
-    curl -X POST http://localhost:${port}/api/research \\
-      -H "Content-Type: application/json" \\
-      -d '{"symbols": ["AAPL", "MSFT"]}'
+  Scheduler:
+    GET  /api/schedules           - List all schedules
+    GET  /api/schedules/presets   - List preset templates
+    POST /api/schedules           - Create new schedule
+    POST /api/schedules/preset/:key - Create from preset
+    POST /api/schedules/:id/run   - Trigger schedule now
+    POST /api/schedules/:id/enable  - Enable schedule
+    POST /api/schedules/:id/disable - Disable schedule
 
-  Switch LLM Provider:
-    curl -X POST http://localhost:${port}/api/llm/config \\
+  Example - Create pre-market news scan:
+    curl -X POST http://localhost:${port}/api/schedules/preset/pre-market-news \\
       -H "Content-Type: application/json" \\
-      -d '{"provider": "openrouter", "model": "anthropic/claude-3.5-sonnet"}'
+      -d '{"symbols": ["AAPL", "MSFT", "NVDA"]}'
 
   WebSocket Example:
     const ws = new WebSocket('ws://localhost:${port}/ws');
@@ -2316,7 +2792,11 @@ async function gracefulShutdown(signal: string) {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    // 3. Run memory maintenance (save any pending changes)
+    // 3. Stop scheduler (stop accepting new scheduled executions)
+    console.log("  Stopping scheduler...");
+    scheduler.stop();
+
+    // 4. Run memory maintenance (save any pending changes)
     console.log("  Running memory maintenance...");
     try {
       const maintenanceResult = await memoryStore.runMaintenance();
@@ -2325,7 +2805,7 @@ async function gracefulShutdown(signal: string) {
       console.warn("  Memory maintenance failed:", (error as Error).message);
     }
 
-    // 4. Close cache connection
+    // 5. Close cache connection
     console.log("  Closing cache connection...");
     try {
       await cacheService.close();
@@ -2333,7 +2813,7 @@ async function gracefulShutdown(signal: string) {
       console.warn("  Cache close failed:", (error as Error).message);
     }
 
-    // 5. Close database connection
+    // 6. Close database connection
     console.log("  Closing database connection...");
     await closeDatabase();
 

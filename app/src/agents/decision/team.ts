@@ -3,6 +3,7 @@ import type { TradingState } from "../../core/state";
 import { PortfolioManager, type TradingDecision } from "./portfolio-manager";
 import { RiskManager, type RiskAssessment } from "./risk-manager";
 import { OrderExecutor, type OrderResult, type ExecutorConfig } from "./order-executor";
+import { sql } from "../../core/database";
 
 // ============================================
 // Decision Team - Sequential Agent Execution
@@ -235,11 +236,14 @@ export class DecisionTeam extends BaseAgent {
   /**
    * Finalize pipeline with success summary
    */
-  private finalizePipeline(
+  private async finalizePipeline(
     state: TradingState,
     stepResults: StepResult[]
-  ): AgentResult {
+  ): Promise<AgentResult> {
     const summaryMessage = this.generateSummary(stepResults, state);
+
+    // Persist ALL decisions to database (including HOLD)
+    await this.persistDecisions(state);
 
     // Store significant decisions in memory
     this.storeDecisionMemory(state);
@@ -330,6 +334,74 @@ export class DecisionTeam extends BaseAgent {
     }
 
     return lines.join("\n");
+  }
+
+  /**
+   * Persist all trading decisions to the database
+   * This is called for ALL decisions including HOLD so we have a complete history
+   */
+  private async persistDecisions(state: TradingState): Promise<void> {
+    const decisions = state.decisions || [];
+    if (decisions.length === 0) {
+      this.log("No decisions to persist");
+      return;
+    }
+
+    const orders = state.orders || [];
+
+    for (const decision of decisions) {
+      try {
+        // Find matching filled order for this decision
+        const matchingOrder = orders.find(
+          (o) => o.symbol === decision.symbol && (o.status === "filled" || o.status === "partial")
+        );
+
+        const decisionId = crypto.randomUUID();
+        const executed = !!matchingOrder;
+        const quantity = decision.quantity || matchingOrder?.filledQuantity || 0;
+
+        // Build summaries from state
+        const technicalSummary = state.technical
+          ? `${state.technical.trend} trend, RSI: ${state.technical.indicators?.rsi?.toFixed(1) || "N/A"}`
+          : null;
+        const fundamentalSummary = state.fundamental
+          ? `${state.fundamental.rating}, PE: ${state.fundamental.metrics?.peRatio?.toFixed(1) || "N/A"}`
+          : null;
+        const sentimentSummary = state.sentiment
+          ? `${state.sentiment.sentiment}, score: ${state.sentiment.score?.toFixed(2) || "N/A"}`
+          : null;
+
+        await sql`
+          INSERT INTO trading_decisions (
+            id, symbol, action, quantity, target_price, stop_loss, take_profit,
+            confidence, reasoning, technical_summary, fundamental_summary,
+            sentiment_summary, executed, order_id, created_at, executed_at
+          ) VALUES (
+            ${decisionId},
+            ${decision.symbol},
+            ${decision.action},
+            ${quantity},
+            ${decision.targetPrice || null},
+            ${decision.stopLoss || null},
+            ${decision.takeProfit || null},
+            ${decision.confidence},
+            ${decision.reasoning},
+            ${technicalSummary},
+            ${fundamentalSummary},
+            ${sentimentSummary},
+            ${executed},
+            ${matchingOrder?.orderId || null},
+            NOW(),
+            ${executed ? new Date() : null}
+          )
+        `;
+
+        this.log(`Persisted decision for ${decision.symbol}: ${decision.action.toUpperCase()} (executed: ${executed})`);
+      } catch (error) {
+        this.logError(`Failed to persist decision for ${decision.symbol}`, error);
+        // Don't throw - we don't want to fail the pipeline for persistence errors
+      }
+    }
   }
 
   /**

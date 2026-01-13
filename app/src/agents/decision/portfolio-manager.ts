@@ -1,5 +1,6 @@
 import { BaseAgent, type AgentConfig, type AgentResult } from "../base";
 import type { TradingState } from "../../core/state";
+import { sql } from "../../core/database";
 
 // ============================================
 // Portfolio Manager Agent
@@ -100,8 +101,11 @@ export class PortfolioManager extends BaseAgent {
         });
       }
 
-      // Generate decision
-      const decision = this.generateDecision(state, primarySymbol);
+      // Load portfolio from database if not in state
+      const portfolio = state.portfolio || await this.loadPortfolioFromDatabase();
+
+      // Generate decision with portfolio context
+      const decision = this.generateDecision({ ...state, portfolio }, primarySymbol);
 
       this.log(
         `Decision for ${primarySymbol}: ${decision.action.toUpperCase()} ` +
@@ -116,6 +120,7 @@ export class PortfolioManager extends BaseAgent {
 
       return this.command("orchestrator", {
         decisions: [decision],
+        portfolio, // Include portfolio in state for downstream agents
         messages: this.addMessage(state, "assistant", summary),
       });
     } catch (error) {
@@ -126,6 +131,50 @@ export class PortfolioManager extends BaseAgent {
           `Portfolio decision failed: ${(error as Error).message}`
         ),
       });
+    }
+  }
+
+  /**
+   * Load current portfolio from database
+   */
+  private async loadPortfolioFromDatabase(): Promise<NonNullable<TradingState["portfolio"]>> {
+    try {
+      // Get account info
+      const [account] = await sql`
+        SELECT cash, total_value 
+        FROM accounts 
+        WHERE mode = 'paper' 
+        LIMIT 1
+      `;
+
+      // Get positions
+      const positions = await sql`
+        SELECT symbol, quantity, avg_cost, current_price, market_value, unrealized_pnl
+        FROM portfolio
+        WHERE quantity > 0
+      `;
+
+      this.log(`Loaded portfolio: $${account?.cash || 100000} cash, ${positions.length} positions`);
+
+      return {
+        cash: Number(account?.cash) || 100000,
+        totalValue: Number(account?.total_value) || 100000,
+        positions: positions.map(p => ({
+          symbol: p.symbol,
+          quantity: Number(p.quantity),
+          avgCost: Number(p.avg_cost),
+          currentPrice: Number(p.current_price),
+          marketValue: Number(p.market_value),
+          unrealizedPnl: Number(p.unrealized_pnl),
+        })),
+      };
+    } catch (error) {
+      this.log("Failed to load portfolio from database, using defaults");
+      return {
+        cash: 100000,
+        totalValue: 100000,
+        positions: [],
+      };
     }
   }
 
@@ -155,8 +204,12 @@ export class PortfolioManager extends BaseAgent {
 
     const combinedScore = totalWeight > 0 ? weightedScore / totalWeight : 50;
 
-    // Determine action
-    const action = this.determineAction(combinedScore);
+    // Check current position for this symbol
+    const currentPosition = state.portfolio?.positions?.find(p => p.symbol === symbol);
+    const hasPosition = currentPosition && currentPosition.quantity > 0;
+
+    // Determine action based on score AND current position
+    const action = this.determineAction(combinedScore, hasPosition);
 
     // Calculate confidence based on agreement and data availability
     const confidence = this.calculateConfidence(
@@ -259,13 +312,37 @@ export class PortfolioManager extends BaseAgent {
     return Math.max(0, Math.min(100, adjustedScore));
   }
 
-  private determineAction(score: number): TradingDecision["action"] {
+  private determineAction(score: number, hasPosition: boolean): TradingDecision["action"] {
+    // Strong bullish signal - BUY (even if we have a position, we might add more)
     if (score >= STRATEGY.minBuyScore) {
       return "buy";
-    } else if (score <= STRATEGY.minSellScore) {
-      return "sell";
     }
+    
+    // Strong bearish signal
+    if (score <= STRATEGY.minSellScore) {
+      // Only SELL if we actually have a position
+      if (hasPosition) {
+        return "sell";
+      }
+      // No position and bearish = hold (no action to take)
+      return "hold";
+    }
+    
+    // Neutral signal (score between 40-60)
     return "hold";
+  }
+
+  /**
+   * Get descriptive action text based on context
+   */
+  private getActionDescription(action: TradingDecision["action"], hasPosition: boolean): string {
+    if (action === "hold") {
+      if (hasPosition) {
+        return "HOLD - maintain current position";
+      }
+      return "NO ACTION - signals insufficient to enter position";
+    }
+    return action.toUpperCase();
   }
 
   private calculateConfidence(

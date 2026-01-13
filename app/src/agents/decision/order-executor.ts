@@ -153,7 +153,13 @@ export class OrderExecutor extends BaseAgent {
       const summary = this.generateSummary(orders, updatedPortfolio);
 
       // Store trade in database
-      await this.recordTrades(orders);
+      await this.recordTrades(orders, state.workflowId);
+      
+      // Persist trading decisions to database
+      await this.persistDecisions(decisions, orders, state);
+      
+      // Persist portfolio changes to database
+      await this.persistPortfolio(updatedPortfolio, orders);
 
       this.log(`Executed ${orders.length} orders`);
 
@@ -391,30 +397,173 @@ export class OrderExecutor extends BaseAgent {
     };
   }
 
-  private async recordTrades(orders: OrderResult[]): Promise<void> {
+  private async recordTrades(orders: OrderResult[], workflowExecutionId?: string): Promise<void> {
     for (const order of orders) {
       if (order.status !== "filled" && order.status !== "partial") continue;
 
       try {
+        // Insert into orders table (workflow_execution_id is nullable for standalone trades)
         await sql`
-          INSERT INTO trade_history (
-            order_id, symbol, action, quantity, price, commission, status, executed_at
+          INSERT INTO orders (
+            id, symbol, action, quantity, order_type, status,
+            filled_quantity, avg_fill_price, commission, mode,
+            created_at, filled_at
           )
           VALUES (
             ${order.orderId},
             ${order.symbol},
             ${order.action},
+            ${order.quantity},
+            'market',
+            ${order.status},
             ${order.filledQuantity},
             ${order.avgPrice},
             ${order.commission},
-            ${order.status},
+            ${this.config.mode},
+            ${order.timestamp},
             ${order.timestamp}
           )
-          ON CONFLICT (order_id) DO NOTHING
+          ON CONFLICT (id) DO NOTHING
         `;
+        this.log(`Recorded order ${order.orderId} to database`);
       } catch (error) {
-        // Table might not exist yet, log but don't fail
-        this.log(`Could not record trade: ${(error as Error).message}`);
+        this.log(`Could not record order: ${(error as Error).message}`);
+      }
+    }
+  }
+
+  /**
+   * Persist portfolio changes to database
+   */
+  private async persistPortfolio(
+    portfolio: NonNullable<TradingState["portfolio"]>,
+    orders: OrderResult[]
+  ): Promise<void> {
+    try {
+      // Update account cash and total value
+      await sql`
+        UPDATE accounts
+        SET 
+          cash = ${portfolio.cash},
+          total_value = ${portfolio.totalValue},
+          updated_at = NOW()
+        WHERE mode = 'paper'
+      `;
+
+      // Update positions
+      for (const pos of portfolio.positions) {
+        // Check if position exists
+        const existing = await sql`
+          SELECT id FROM portfolio WHERE symbol = ${pos.symbol}
+        `;
+
+        if (existing.length > 0) {
+          // Update existing position
+          await sql`
+            UPDATE portfolio
+            SET 
+              quantity = ${pos.quantity},
+              avg_cost = ${pos.avgCost},
+              current_price = ${pos.currentPrice},
+              market_value = ${pos.marketValue},
+              unrealized_pnl = ${pos.unrealizedPnl},
+              unrealized_pnl_percent = ${pos.quantity > 0 ? ((pos.currentPrice - pos.avgCost) / pos.avgCost * 100) : 0},
+              last_trade_at = NOW(),
+              updated_at = NOW()
+            WHERE symbol = ${pos.symbol}
+          `;
+        } else {
+          // Insert new position
+          await sql`
+            INSERT INTO portfolio (
+              id, symbol, quantity, avg_cost, current_price, 
+              market_value, unrealized_pnl, unrealized_pnl_percent,
+              first_bought_at, last_trade_at, created_at, updated_at
+            )
+            VALUES (
+              ${crypto.randomUUID()},
+              ${pos.symbol},
+              ${pos.quantity},
+              ${pos.avgCost},
+              ${pos.currentPrice},
+              ${pos.marketValue},
+              ${pos.unrealizedPnl},
+              ${pos.quantity > 0 ? ((pos.currentPrice - pos.avgCost) / pos.avgCost * 100) : 0},
+              NOW(),
+              NOW(),
+              NOW(),
+              NOW()
+            )
+          `;
+        }
+      }
+
+      // Remove closed positions (quantity = 0)
+      const closedSymbols = orders
+        .filter(o => o.action === "sell" && o.status === "filled")
+        .map(o => o.symbol);
+      
+      for (const symbol of closedSymbols) {
+        const stillHolding = portfolio.positions.find(p => p.symbol === symbol);
+        if (!stillHolding) {
+          await sql`DELETE FROM portfolio WHERE symbol = ${symbol}`;
+        }
+      }
+
+      this.log(`Persisted portfolio: $${portfolio.cash.toFixed(2)} cash, ${portfolio.positions.length} positions`);
+    } catch (error) {
+      this.log(`Could not persist portfolio: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Persist trading decisions to database for analytics and history
+   */
+  private async persistDecisions(
+    decisions: TradingDecision[],
+    orders: OrderResult[],
+    state: TradingState
+  ): Promise<void> {
+    for (const decision of decisions) {
+      try {
+        // Find matching order if executed
+        const matchingOrder = orders.find(
+          o => o.symbol === decision.symbol && o.status === "filled"
+        );
+
+        const decisionId = crypto.randomUUID();
+
+        await sql`
+          INSERT INTO trading_decisions (
+            id, workflow_execution_id, symbol, action, quantity,
+            target_price, stop_loss, take_profit, confidence, reasoning,
+            technical_summary, fundamental_summary, sentiment_summary,
+            executed, order_id, created_at, executed_at
+          )
+          VALUES (
+            ${decisionId},
+            ${null},
+            ${decision.symbol},
+            ${decision.action},
+            ${decision.quantity || matchingOrder?.filledQuantity || 0},
+            ${decision.targetPrice || null},
+            ${decision.stopLoss || null},
+            ${decision.takeProfit || null},
+            ${decision.confidence},
+            ${decision.reasoning},
+            ${state.technical ? `${state.technical.trend} trend, ${state.technical.trendStrength}% strength` : null},
+            ${state.fundamental ? `${state.fundamental.rating} rating` : null},
+            ${state.sentiment ? `${state.sentiment.sentiment}, score: ${state.sentiment.overallScore.toFixed(2)}` : null},
+            ${matchingOrder ? true : false},
+            ${matchingOrder?.orderId || null},
+            NOW(),
+            ${matchingOrder ? 'NOW()' : null}
+          )
+        `;
+
+        this.log(`Persisted decision: ${decision.action} ${decision.symbol}`);
+      } catch (error) {
+        this.log(`Could not persist decision: ${(error as Error).message}`);
       }
     }
   }

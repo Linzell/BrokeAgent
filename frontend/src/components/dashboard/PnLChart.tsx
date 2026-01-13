@@ -157,8 +157,8 @@ export function PnLChart({
     range: "7d" | "30d" | "all"
   ): ChartDataPoint[] {
     if (!decisions.length) {
-      // Generate sample data for demo when no real data
-      return generateSampleData(range);
+      // Return empty array when no real data - no fake demo data
+      return [];
     }
 
     // Filter by time range
@@ -172,9 +172,9 @@ export function PnLChart({
       return now.getTime() - date.getTime() <= rangeMs;
     });
 
-    // If no decisions in range, show sample data
+    // If no decisions in range, return empty
     if (!filteredDecisions.length) {
-      return generateSampleData(range);
+      return [];
     }
 
     // Group by date - use ISO date string (YYYY-MM-DD) as key for proper sorting
@@ -209,39 +209,13 @@ export function PnLChart({
     });
   }
 
-  // Generate sample data for demo purposes
-  function generateSampleData(range: "7d" | "30d" | "all"): ChartDataPoint[] {
-    const days = range === "7d" ? 7 : range === "30d" ? 30 : 90;
-    const data: ChartDataPoint[] = [];
-    let cumulativePnl = 0;
-
-    for (let i = days; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      
-      // Generate realistic-looking P&L with some variance
-      const dailyPnl = Math.random() * 400 - 150; // -150 to +250
-      cumulativePnl += dailyPnl;
-      
-      data.push({
-        date: formatDate(date.toISOString()),
-        timestamp: date.getTime(),
-        pnl: dailyPnl,
-        cumulativePnl,
-        decisions: Math.floor(Math.random() * 5) + 1,
-      });
-    }
-
-    return data;
-  }
-
   useEffect(() => {
     fetchData();
   }, [timeRange]);
 
   // Check if we have real P&L data or just decisions without outcomes
   const hasRealPnLData = chartData.some(d => d.pnl !== 0);
-  const isShowingSampleData = decisions.length === 0;
+  const hasNoData = decisions.length === 0;
 
   // Calculate summary stats
   const totalPnL = chartData.length > 0 ? (Number(chartData[chartData.length - 1].cumulativePnl) || 0) : 0;
@@ -380,20 +354,17 @@ export function PnLChart({
                 </ResponsiveContainer>
               </div>
             ) : (
-              <div className="text-center py-8 text-slate-500">
-                No P&L data available. Run some trading workflows to generate data.
+              <div className="h-64 flex items-center justify-center text-slate-500 bg-slate-50 rounded-lg">
+                <div className="text-center">
+                  <TrendingUp className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                  <p className="font-medium">No P&L Data Yet</p>
+                  <p className="text-sm text-slate-400 mt-1">Run trading workflows to generate performance data</p>
+                </div>
               </div>
-            )}
-
-            {/* Demo data notice */}
-            {isShowingSampleData && chartData.length > 0 && (
-              <p className="text-xs text-center text-slate-400 mt-4">
-                Showing sample data for demonstration. Run workflows to see real P&L.
-              </p>
             )}
             
             {/* No P&L data notice - decisions exist but no outcomes recorded */}
-            {!isShowingSampleData && !hasRealPnLData && chartData.length > 0 && (
+            {!hasNoData && !hasRealPnLData && chartData.length > 0 && (
               <p className="text-xs text-center text-slate-400 mt-4">
                 Decisions recorded but no P&L outcomes yet. P&L will appear when trades are closed.
               </p>

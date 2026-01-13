@@ -2,6 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import WorkflowBuilder from '../components/dashboard/WorkflowBuilder';
 import LiveStatus from '../components/dashboard/LiveStatus';
+import Schedules from '../components/dashboard/Schedules';
 ---
 
 <Layout title="BrokeAgent - Workflows">
@@ -53,6 +54,11 @@ import LiveStatus from '../components/dashboard/LiveStatus';
 					</section>
 				</div>
 			</div>
+
+			<!-- Scheduled Workflows Section -->
+			<section id="schedules" class="mt-12">
+				<Schedules client:load />
+			</section>
 		</main>
 
 		<!-- Footer -->
