@@ -174,7 +174,7 @@ curl -X POST http://localhost:3050/api/trade \
   -d '{"symbols": ["GOOGL"]}'
 
 # Run tiered debate (holdings + watchlist + discovery)
-curl -X POST http://localhost:3050/api/tiered-debate \
+curl -X POST http://localhost:3050/api/debate/tiered \
   -H "Content-Type: application/json" \
   -d '{"holdings": ["AAPL"], "watchlist": ["MSFT", "GOOGL"], "discovery": ["NVDA", "AMD"]}'
 ```
@@ -184,6 +184,9 @@ curl -X POST http://localhost:3050/api/tiered-debate \
 ```bash
 # Get portfolio
 curl http://localhost:3050/api/portfolio
+
+# Get orders
+curl http://localhost:3050/api/orders
 
 # Get market quotes
 curl http://localhost:3050/api/market/quotes
@@ -198,6 +201,20 @@ curl -X POST http://localhost:3050/api/memory/search \
 
 # Get LLM model health stats
 curl http://localhost:3050/api/llm/smart/health
+```
+
+### Schedule Management
+
+```bash
+# Get all schedules
+curl http://localhost:3050/api/schedules
+
+# Run a schedule manually
+curl -X POST http://localhost:3050/api/schedules/{id}/run
+
+# Enable/disable a schedule
+curl -X POST http://localhost:3050/api/schedules/{id}/enable
+curl -X POST http://localhost:3050/api/schedules/{id}/disable
 ```
 
 ## WebSocket Events
